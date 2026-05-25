@@ -19,7 +19,8 @@ import {
   query, 
   where, 
   orderBy, 
-  limit
+  limit,
+  or
 } from 'firebase/firestore';
 import { 
   getStorage, 
@@ -201,18 +202,48 @@ class FirebaseCollectionWrapper {
       }
     }
 
+    // Specially optimize messages queries to prevent fetching all messages and to avoid complex index errors
+    let isMessagesUserQuery = false;
+    let myId = null;
+    if (this.name === 'messages' && options.filter && (options.filter.includes('senderId') || options.filter.includes('recipientId'))) {
+      const matches = [...options.filter.matchAll(/"([^"]+)"/g)].map(m => m[1]);
+      if (matches.length > 0) {
+        myId = matches[0];
+        isMessagesUserQuery = true;
+      }
+    }
+
     // Apply sorting
-    if (options.sort) {
+    if (options.sort && !isMessagesUserQuery) {
       const isDesc = options.sort.startsWith('-');
       const field = isDesc ? options.sort.substring(1) : options.sort;
       constraints.push(orderBy(field, isDesc ? 'desc' : 'asc'));
     }
 
-    const querySnapshot = await getDocs(query(q, ...constraints));
+    let querySnapshot;
+    if (isMessagesUserQuery && myId) {
+      querySnapshot = await getDocs(query(q, or(where('senderId', '==', myId), where('recipientId', '==', myId))));
+    } else {
+      querySnapshot = await getDocs(query(q, ...constraints));
+    }
+
     let items = [];
     querySnapshot.forEach((doc) => {
       items.push({ id: doc.id, ...doc.data() });
     });
+
+    // In-memory sorting for optimized queries
+    if (isMessagesUserQuery && options.sort) {
+      const isDesc = options.sort.startsWith('-');
+      const field = isDesc ? options.sort.substring(1) : options.sort;
+      items.sort((a, b) => {
+        const valA = a[field] || '';
+        const valB = b[field] || '';
+        if (valA < valB) return isDesc ? 1 : -1;
+        if (valA > valB) return isDesc ? -1 : 1;
+        return 0;
+      });
+    }
 
     // In-memory filters (full text searches & complex disjunctions)
     if (options.filter) {
@@ -317,6 +348,16 @@ class FirebaseCollectionWrapper {
           }
         } catch (e) {
           console.error("Error expanding recipientId:", e);
+        }
+      }
+      if (field === 'listingId' && record.listingId) {
+        try {
+          const listingSnap = await getDoc(doc(db, 'listings', record.listingId));
+          if (listingSnap.exists()) {
+            record.expand.listingId = { id: listingSnap.id, ...listingSnap.data() };
+          }
+        } catch (e) {
+          console.error("Error expanding listingId:", e);
         }
       }
     }
