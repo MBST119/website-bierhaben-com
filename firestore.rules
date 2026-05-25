@@ -11,10 +11,14 @@ service cloud.firestore {
     match /listings/{listingId} {
       allow read: if true;
       allow create: if request.auth != null;
-      allow update, delete: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
+      allow update, delete: if request.auth != null && (resource == null || resource.data.sellerId == request.auth.uid);
     }
-    match /messages/{messageId} {
+    match /chats/{chatId} {
       allow read, write: if request.auth != null;
+      
+      match /messages/{messageId} {
+        allow read, write: if request.auth != null;
+      }
     }
   }
 }
