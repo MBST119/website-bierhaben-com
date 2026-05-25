@@ -1,11 +1,10 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import pb from '@/lib/pocketbaseClient.js';
 import { useAuth } from '@/contexts/AuthContext.jsx';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Send, Loader2 } from 'lucide-react';
+import { Send, Loader2, Image, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 const ChatWindow = ({ recipientId, listingId = null }) => {
@@ -15,7 +14,10 @@ const ChatWindow = ({ recipientId, listingId = null }) => {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [recipient, setRecipient] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -67,24 +69,60 @@ const ChatWindow = ({ recipientId, listingId = null }) => {
     }
   }, [currentUser, recipientId]);
 
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (!file.type.startsWith('image/')) {
+        toast.error('Bitte wähle eine Bilddatei aus.');
+        return;
+      }
+      setSelectedImage(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleRemoveImage = () => {
+    setSelectedImage(null);
+    setImagePreview(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const handleSend = async (e) => {
     e.preventDefault();
-    if (!newMessage.trim() || sending) return;
+    if ((!newMessage.trim() && !selectedImage) || sending) return;
 
     setSending(true);
     try {
-      const messageData = {
-        senderId: currentUser.id,
-        recipientId: recipientId,
-        messageText: newMessage.trim()
-      };
-      
-      if (listingId) {
-        messageData.listingId = listingId;
+      if (selectedImage) {
+        const formData = new FormData();
+        formData.append('senderId', currentUser.id);
+        formData.append('recipientId', recipientId);
+        formData.append('messageText', newMessage.trim());
+        formData.append('image', selectedImage);
+        if (listingId) {
+          formData.append('listingId', listingId);
+        }
+        await pb.collection('messages').create(formData, { $autoCancel: false });
+      } else {
+        const messageData = {
+          senderId: currentUser.id,
+          recipientId: recipientId,
+          messageText: newMessage.trim()
+        };
+        if (listingId) {
+          messageData.listingId = listingId;
+        }
+        await pb.collection('messages').create(messageData, { $autoCancel: false });
       }
-
-      await pb.collection('messages').create(messageData, { $autoCancel: false });
+      
       setNewMessage('');
+      handleRemoveImage();
       await fetchMessages(); // Refresh message list after sending
       toast.success('Nachricht gesendet');
     } catch (error) {
@@ -147,7 +185,7 @@ const ChatWindow = ({ recipientId, listingId = null }) => {
             return (
               <div
                 key={message.id}
-                className={`flex w-full animate-message-enter gap-3 ${isOwn ? 'justify-end flex-row-reverse' : 'justify-start'}`}
+                className={`flex w-full animate-message-enter gap-3 ${isOwn ? 'justify-end' : 'justify-start'}`}
               >
                 {!isOwn && (
                   <Avatar className="h-8 w-8 rounded-xl flex-shrink-0 mt-auto">
@@ -163,6 +201,16 @@ const ChatWindow = ({ recipientId, listingId = null }) => {
                       isOwn ? 'chat-bubble-own' : 'chat-bubble-other'
                     }`}
                   >
+                    {message.image && (
+                      <div className="mb-2 max-w-xs overflow-hidden rounded-lg">
+                        <img 
+                          src={message.image} 
+                          alt="Gesendetes Bild" 
+                          className="w-full h-auto max-h-60 object-cover cursor-pointer hover:opacity-90 transition-opacity" 
+                          onClick={() => window.open(message.image, '_blank')}
+                        />
+                      </div>
+                    )}
                     {message.messageText}
                   </div>
                   <span className="text-xs text-muted-foreground mt-1 px-1">
@@ -181,7 +229,40 @@ const ChatWindow = ({ recipientId, listingId = null }) => {
 
       {/* Input */}
       <form onSubmit={handleSend} className="p-4 border-t border-border bg-card shrink-0">
+        {imagePreview && (
+          <div className="relative inline-block mb-3 p-1 bg-background border border-border rounded-lg group animate-message-enter">
+            <img 
+              src={imagePreview} 
+              alt="Preview" 
+              className="h-20 w-auto rounded-md object-cover"
+            />
+            <button
+              type="button"
+              onClick={handleRemoveImage}
+              className="absolute -top-1.5 -right-1.5 p-1 bg-destructive text-destructive-foreground rounded-full hover:scale-105 active:scale-95 transition-transform shadow-sm"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
         <div className="flex gap-3">
+          <input
+            type="file"
+            accept="image/*"
+            ref={fileInputRef}
+            onChange={handleImageChange}
+            className="hidden"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending}
+            className="border-border/60 text-muted-foreground hover:text-foreground shrink-0 transition-transform active:scale-[0.98]"
+          >
+            <Image className="h-4 w-4" />
+          </Button>
           <Input
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
@@ -191,7 +272,7 @@ const ChatWindow = ({ recipientId, listingId = null }) => {
           />
           <Button 
             type="submit" 
-            disabled={sending || !newMessage.trim()} 
+            disabled={sending || (!newMessage.trim() && !selectedImage)} 
             size="icon"
             className="bg-primary hover:bg-primary/90 text-primary-foreground shrink-0 transition-transform active:scale-[0.98]"
           >

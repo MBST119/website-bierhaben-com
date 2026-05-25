@@ -106,8 +106,8 @@ class FirebaseCollectionWrapper {
       const uploadResult = await uploadBytes(fileRef, item.file);
       const downloadUrl = await getDownloadURL(uploadResult.ref);
 
-      if (item.key === 'avatar') {
-        dataObj.avatar = downloadUrl;
+      if (item.key === 'avatar' || item.key === 'image') {
+        dataObj[item.key] = downloadUrl;
       } else {
         if (!dataObj[item.key]) {
           dataObj[item.key] = [];
