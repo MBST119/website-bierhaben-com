@@ -225,15 +225,26 @@ class FirebaseCollectionWrapper {
         );
       }
 
-      if (options.filter.includes('senderId') && options.filter.includes('recipientId')) {
-        const ids = [...options.filter.matchAll(/"([^"]+)"/g)].map(m => m[1]);
-        if (ids.length >= 2) {
-          const userA = ids[0];
-          const userB = ids[1];
-          items = items.filter(item => 
-            (item.senderId === userA && item.recipientId === userB) ||
-            (item.senderId === userB && item.recipientId === userA)
-          );
+      if (options.filter.includes('senderId') || options.filter.includes('recipientId')) {
+        const isChatQuery = options.filter.includes('&&');
+        const matches = [...options.filter.matchAll(/"([^"]+)"/g)].map(m => m[1]);
+        
+        if (isChatQuery) {
+          if (matches.length >= 2) {
+            const userA = matches[0];
+            const userB = matches.find(id => id !== userA) || userA;
+            items = items.filter(item => 
+              (item.senderId === userA && item.recipientId === userB) ||
+              (item.senderId === userB && item.recipientId === userA)
+            );
+          }
+        } else {
+          if (matches.length > 0) {
+            const userId = matches[0];
+            items = items.filter(item => 
+              item.senderId === userId || item.recipientId === userId
+            );
+          }
         }
       }
     }
