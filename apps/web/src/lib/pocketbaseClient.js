@@ -19,8 +19,7 @@ import {
   query, 
   where, 
   orderBy, 
-  limit,
-  or
+  limit
 } from 'firebase/firestore';
 import { 
   getStorage, 
@@ -220,17 +219,30 @@ class FirebaseCollectionWrapper {
       constraints.push(orderBy(field, isDesc ? 'desc' : 'asc'));
     }
 
-    let querySnapshot;
-    if (isMessagesUserQuery && myId) {
-      querySnapshot = await getDocs(query(q, or(where('senderId', '==', myId), where('recipientId', '==', myId))));
-    } else {
-      querySnapshot = await getDocs(query(q, ...constraints));
-    }
-
     let items = [];
-    querySnapshot.forEach((doc) => {
-      items.push({ id: doc.id, ...doc.data() });
-    });
+    if (isMessagesUserQuery && myId) {
+      // Use two separate queries instead of or() for Safari compatibility
+      const senderSnapshot = await getDocs(query(q, where('senderId', '==', myId)));
+      const recipientSnapshot = await getDocs(query(q, where('recipientId', '==', myId)));
+      const seen = new Set();
+      senderSnapshot.forEach((d) => {
+        if (!seen.has(d.id)) {
+          seen.add(d.id);
+          items.push({ id: d.id, ...d.data() });
+        }
+      });
+      recipientSnapshot.forEach((d) => {
+        if (!seen.has(d.id)) {
+          seen.add(d.id);
+          items.push({ id: d.id, ...d.data() });
+        }
+      });
+    } else {
+      const querySnapshot = await getDocs(query(q, ...constraints));
+      querySnapshot.forEach((doc) => {
+        items.push({ id: doc.id, ...doc.data() });
+      });
+    }
 
     // In-memory sorting for optimized queries
     if (isMessagesUserQuery && options.sort) {
