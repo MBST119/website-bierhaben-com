@@ -72,6 +72,9 @@ const getInitialAuthModel = () => {
   return null;
 };
 
+// Global in-memory cache for expanded records to prevent N+1 queries
+const docCache = new Map();
+
 // 2. Collection Wrapper that emulates PocketBase collections APIs
 class FirebaseCollectionWrapper {
   constructor(name, parent) {
@@ -319,59 +322,69 @@ class FirebaseCollectionWrapper {
   async _expandRecord(record, expandStr) {
     record.expand = {};
     const expandFields = expandStr.split(',');
+    const promises = [];
     
     for (let field of expandFields) {
       field = field.trim();
+      let collectionName = null;
+      let docId = null;
+
       if (field === 'category' && record.category) {
-        try {
-          const catSnap = await getDoc(doc(db, 'categories', record.category));
-          if (catSnap.exists()) {
-            record.expand.category = { id: catSnap.id, ...catSnap.data() };
+        collectionName = 'categories';
+        docId = record.category;
+      } else if (field === 'userId' && record.userId) {
+        collectionName = 'users';
+        docId = record.userId;
+      } else if (field === 'senderId' && record.senderId) {
+        collectionName = 'users';
+        docId = record.senderId;
+      } else if (field === 'recipientId' && record.recipientId) {
+        collectionName = 'users';
+        docId = record.recipientId;
+      } else if (field === 'listingId' && record.listingId) {
+        collectionName = 'listings';
+        docId = record.listingId;
+      }
+
+      if (collectionName && docId) {
+        const cacheKey = `${collectionName}_${docId}`;
+        
+        if (docCache.has(cacheKey)) {
+          const cachedData = docCache.get(cacheKey);
+          if (cachedData instanceof Promise) {
+            promises.push(cachedData.then(data => {
+              if (data) record.expand[field] = data;
+            }));
+          } else if (cachedData) {
+            record.expand[field] = cachedData;
           }
-        } catch (e) {
-          console.error("Error expanding category:", e);
+        } else {
+          // Fetch and cache the promise to deduplicate simultaneous requests
+          const fetchPromise = getDoc(doc(db, collectionName, docId)).then(snap => {
+            if (snap.exists()) {
+              const data = { id: snap.id, ...snap.data() };
+              docCache.set(cacheKey, data); // replace promise with resolved data
+              return data;
+            } else {
+              docCache.set(cacheKey, null);
+              return null;
+            }
+          }).catch(e => {
+            console.error(`Error expanding ${field}:`, e);
+            docCache.delete(cacheKey); // remove on error so we can retry later
+            return null;
+          });
+          
+          docCache.set(cacheKey, fetchPromise);
+          promises.push(fetchPromise.then(data => {
+            if (data) record.expand[field] = data;
+          }));
         }
       }
-      if (field === 'userId' && record.userId) {
-        try {
-          const userSnap = await getDoc(doc(db, 'users', record.userId));
-          if (userSnap.exists()) {
-            record.expand.userId = { id: userSnap.id, ...userSnap.data() };
-          }
-        } catch (e) {
-          console.error("Error expanding userId:", e);
-        }
-      }
-      if (field === 'senderId' && record.senderId) {
-        try {
-          const userSnap = await getDoc(doc(db, 'users', record.senderId));
-          if (userSnap.exists()) {
-            record.expand.senderId = { id: userSnap.id, ...userSnap.data() };
-          }
-        } catch (e) {
-          console.error("Error expanding senderId:", e);
-        }
-      }
-      if (field === 'recipientId' && record.recipientId) {
-        try {
-          const userSnap = await getDoc(doc(db, 'users', record.recipientId));
-          if (userSnap.exists()) {
-            record.expand.recipientId = { id: userSnap.id, ...userSnap.data() };
-          }
-        } catch (e) {
-          console.error("Error expanding recipientId:", e);
-        }
-      }
-      if (field === 'listingId' && record.listingId) {
-        try {
-          const listingSnap = await getDoc(doc(db, 'listings', record.listingId));
-          if (listingSnap.exists()) {
-            record.expand.listingId = { id: listingSnap.id, ...listingSnap.data() };
-          }
-        } catch (e) {
-          console.error("Error expanding listingId:", e);
-        }
-      }
+    }
+    
+    if (promises.length > 0) {
+      await Promise.all(promises);
     }
   }
 
@@ -471,7 +484,7 @@ const seedCategories = async () => {
     console.error('Error seeding categories:', e);
   }
 };
-seedCategories();
+// seedCategories(); // Disabled in production to prevent unnecessary reads
 
 export default pb;
 export { pb as pocketbaseClient };
